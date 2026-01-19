@@ -107,3 +107,29 @@ El "cliente" es un Atajo nativo de Apple. Sigue estos pasos para construirlo des
 
 ---
 *Developed by Gabriel Trujillo Vallejo (2026).*
+
+---
+
+## 💻 Desarrollo Local (Cómo probar tus cambios)
+
+Si quieres modificar el código, no necesitas desplegar en Google Cloud. Puedes probarlo todo en tu máquina:
+
+### 1. Instalar Dependencias
+\`\`\`bash
+pip install -r requirements.txt
+\`\`\`
+
+### 2. Ejecutar Test Automático
+Hemos incluido un script que simula la petición del iPhone y guarda el gráfico generado en tu carpeta:
+\`\`\`bash
+python test_local.py
+\`\`\`
+*Si ves el archivo `test_output_grafico.png` y el texto en la terminal, tu código funciona.*
+
+### 3. Servidor en Vivo (Live Reload)
+Si prefieres ver la API en el navegador:
+\`\`\`bash
+uvicorn main:app --reload
+\`\`\`
+Luego abre tu navegador en: `http://127.0.0.1:8000/docs`.
+Verás la interfaz de Swagger UI donde puedes probar el endpoint `/briefing` interactivamente.
