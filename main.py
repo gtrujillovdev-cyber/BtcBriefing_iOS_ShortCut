@@ -1,5 +1,4 @@
-
-from typing import Mapping, TypedDict, Any, cast
+from typing import Mapping, TypedDict, Any, cast, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel
 import io
@@ -29,23 +28,83 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+# --- CONFIGURACIÓN CENTRALIZADA ---
+class ApiConfig(TypedDict):
+    crypto_url: str
+    news_url: str
+    shortener_api: str
+    headers: dict[str, str]
+
+class ChartColors(TypedDict):
+    up: str
+    down: str
+    inherit: bool
+
+class ChartConfig(TypedDict):
+    style: str
+    colors: ChartColors
+    grid: str
+    sma_color: str
+    support_color: str
+
+class ParamsConfig(TypedDict):
+    sma_period: int
+    rsi_period: int
+    support_range_days: int
+    plot_range_days: int
+
+class AppConfig(TypedDict):
+    api: ApiConfig
+    tickers: dict[str, str]
+    params: ParamsConfig
+    chart: ChartConfig
+
+CONFIG: AppConfig = {
+    "api": {
+        "crypto_url": "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=800",
+        "news_url": "https://news.google.com/rss/search?q=Bitcoin+OR+Criptomonedas+OR+Mercados&hl=es&gl=ES&ceid=ES:es",
+        "shortener_api": "https://is.gd/create.php",
+        "headers": HEADERS,
+    },
+    "tickers": {
+        "ETH-USD": "Ethereum",
+        "MSTR": "MicroStrategy",
+        "^GSPC": "S&P 500",
+        "^NDX": "Nasdaq 100",
+        "GC=F": "Oro (Gold)",
+    },
+    "params": {
+        "sma_period": 730,
+        "rsi_period": 14,
+        "support_range_days": 60,
+        "plot_range_days": 150,
+    },
+    "chart": {
+        "style": "nightclouds",
+        "colors": {"up": "#00ff00", "down": "#ff3333", "inherit": True},
+        "grid": ":",
+        "sma_color": "orange",
+        "support_color": "cyan",
+    },
+}
+
 # --- HERRAMIENTA EXTRA: ACORTADOR DE URLS ---
 
 def make_tiny(url: str) -> str:
     try:
-        # Usamos la API pública de TinyURL para limpiar el enlace
-        api_url = f"http://tinyurl.com/api-create.php?url={url}"
-        r = requests.get(api_url, timeout=2)
-        return r.text
-    except:
-        # Si falla el acortador, devolvemos el enlace original aunque sea largo
+        # Usamos is.gd ya que tinyurl.com a veces rechaza conexiones en entornos Cloud
+        r = requests.get(CONFIG['api']['shortener_api'], params={"format": "simple", "url": url}, timeout=5)
+        r.raise_for_status()
+        short: str = r.text.strip()
+        return short
+    except Exception:
         return url
 
 # --- 1. MOTOR CRYPTO ---
 
 def get_crypto_data() -> tuple[pd.DataFrame, dict[str, float]]:
     try:
-        url = CONFIG['api']['crypto_url']
+        url: str = CONFIG['api']['crypto_url']
         r = requests.get(url, headers=CONFIG['api']['headers'], timeout=10)
         data = r.json()
 
@@ -67,7 +126,7 @@ def get_crypto_data() -> tuple[pd.DataFrame, dict[str, float]]:
         gain: pd.Series = delta.clip(lower=0).rolling(CONFIG['params']['rsi_period']).mean()
         loss: pd.Series = (-delta).clip(lower=0).rolling(CONFIG['params']['rsi_period']).mean()
 
-        # Evitamos la división por cero en el cálculo de RSI añadiendo un pequeño epsilon
+        # RSI
         loss_safe: pd.Series = loss.copy()
         loss_safe[loss_safe == 0] = 1e-10
         rs: pd.Series = gain / loss_safe
@@ -92,16 +151,16 @@ def get_market_data() -> dict[str, tuple[float, float]]:
     tickers: dict[str, str] = CONFIG['tickers']
     results: dict[str, tuple[float, float]] = {}
     try:
-        data = yf.Tickers(" ".join(tickers.keys()))
         for symbol, name in tickers.items():
             try:
-                info = data.tickers[symbol].fast_info  # type: ignore[attr-defined]
+                t = yf.Ticker(symbol)
+                info = t.fast_info
                 price = float(info['last_price'])
                 prev = float(info['previous_close'])
                 chg = ((price - prev) / prev) * 100
                 results[name] = (price, chg)
             except Exception as e:
-                print(f"Error fetching {name}: {e}")
+                print(f"Error fetching {name} ({symbol}): {e}")
                 results[name] = (0.0, 0.0)
         return results
     except Exception as e:
@@ -113,22 +172,27 @@ def get_market_data() -> dict[str, tuple[float, float]]:
 
 def get_clean_news() -> str:
     try:
-        url = CONFIG['api']['news_url']
+        url: str = CONFIG['api']['news_url']
         r = requests.get(url, headers=CONFIG['api']['headers'], timeout=5)
         root = ElementTree.fromstring(r.content)
-        items = root.findall('./channel/item')[:3]  # Limitamos a 3 para no saturar
+        items = root.findall('./channel/item')[:3]
 
         formatted: list[str] = []
         for item in items:
-            title = item.find('title').text.split(' - ')[0]
-            long_link = item.find('link').text
-            
-            # ¡MAGIA! Acortamos el enlace
-            short_link = make_tiny(long_link)
-            
-            formatted.append(f"🔹 {title}\n   👉 {short_link}")
+            title_el: Optional[ElementTree.Element] = item.find('title')
+            raw_title: str = title_el.text if (title_el is not None and title_el.text) else ""
+            title: str = raw_title.split(' - ')[0] if raw_title else ""
+
+            link_el: Optional[ElementTree.Element] = item.find('link')
+            long_link: str = link_el.text if (link_el is not None and link_el.text) else ""
+
+            short_link: str = make_tiny(long_link.strip()) if long_link else ""
+
+            bullet: str = f"🔹 {title}\n👉 {short_link}" if short_link else f"🔹 {title}"
+            formatted.append(bullet)
         
-        if not formatted: return "Sin noticias."
+        if not formatted:
+            return "Sin noticias."
         return "\n\n".join(formatted)
     except Exception as e:
         return f"Error news: {str(e)}"
@@ -146,6 +210,16 @@ def get_analysis(rsi: float, price: float, sma: float) -> str:
     return f"{sent} Tendencia de fondo ({CONFIG['params']['sma_period']}d): {trend}"
 
 def format_briefing_message(date: str, analisis: str, btc: dict[str, float], mk: Mapping[str, tuple[float, float]], news: str) -> str:
+    # Aseguramos que los activos existen en el diccionario para evitar KeyError
+    def get_val(name: str) -> tuple[float, float]:
+        return mk.get(name, (0.0, 0.0))
+
+    eth = get_val("Ethereum")
+    mstr = get_val("MicroStrategy")
+    sp500 = get_val("S&P 500")
+    ndx = get_val("Nasdaq 100")
+    oro = get_val("Oro (Gold)")
+
     return f"""
 🇪🇸 *INFORME V17.5 – {date}*
 
@@ -156,11 +230,11 @@ def format_briefing_message(date: str, analisis: str, btc: dict[str, float], mk:
 2️⃣ *ACTIVOS CLAVE*
 
 • ₿ BTC: ${btc['price']:,.0f} ({btc['chg']:+.2f}%)
-• Ξ ETH: ${mk['Ethereum'][0]:,.0f} ({mk['Ethereum'][1]:+.2f}%)
-• 🏢 MSTR: ${mk['MicroStrategy'][0]:.2f} ({mk['MicroStrategy'][1]:+.2f}%)
-• 🏛 SP500: {mk['S&P 500'][0]:,.0f} ({mk['S&P 500'][1]:+.2f}%)
-• 💻 NDX: {mk['Nasdaq 100'][0]:,.0f} ({mk['Nasdaq 100'][1]:+.2f}%)
-• 🥇 ORO: ${mk['Oro (Gold)'][0]:,.0f}
+• Ξ ETH: ${eth[0]:,.0f} ({eth[1]:+.2f}%)
+• 🏢 MSTR: ${mstr[0]:.2f} ({mstr[1]:+.2f}%)
+• 🏛 SP500: {sp500[0]:,.0f} ({sp500[1]:+.2f}%)
+• 💻 NDX: {ndx[0]:,.0f} ({ndx[1]:+.2f}%)
+• 🥇 ORO: ${oro[0]:,.0f}
 
 3️⃣ *TÉCNICO BTC*
 
@@ -176,15 +250,15 @@ def format_briefing_message(date: str, analisis: str, btc: dict[str, float], mk:
 def generate_briefing_chart(df: pd.DataFrame, btc_data: dict[str, float], date: str) -> str:
     try:
         buf = io.BytesIO()
-        plot_df = df.tail(CONFIG['params']['plot_range_days'])
+        plot_df: pd.DataFrame = df.tail(CONFIG['params']['plot_range_days'])
 
         chart_config = CONFIG['chart']
-        mc: Any = mpf.make_marketcolors(  # type: ignore
+        mc: Any = mpf.make_marketcolors( # type: ignore
             up=chart_config['colors']['up'],
             down=chart_config['colors']['down'],
             inherit=chart_config['colors']['inherit'],
         )
-        s: Any = mpf.make_mpf_style(  # type: ignore
+        s: Any = mpf.make_mpf_style( # type: ignore
             base_mpf_style=chart_config['style'],
             marketcolors=mc,
             gridstyle=chart_config['grid'],
@@ -192,13 +266,13 @@ def generate_briefing_chart(df: pd.DataFrame, btc_data: dict[str, float], date: 
 
         ap: list[dict[str, Any]] = []
         if not plot_df['SMA'].isnull().all():
-            ap.append(cast(dict[str, Any], mpf.make_addplot(plot_df['SMA'], color=chart_config['sma_color'], width=2)))  # type: ignore
+            ap.append(cast(dict[str, Any], mpf.make_addplot(plot_df['SMA'], color=chart_config['sma_color'], width=2))) # type: ignore
 
         fig: Figure
         axlist: list[Axes]
         fig, axlist = cast(
             tuple[Figure, list[Axes]],
-            mpf.plot(  # type: ignore
+            mpf.plot( # type: ignore
                 plot_df,
                 type='candle',
                 style=s,
@@ -218,9 +292,9 @@ def generate_briefing_chart(df: pd.DataFrame, btc_data: dict[str, float], date: 
             Line2D([0], [0], color=chart_config['support_color'], lw=1.5, linestyle='--', label=f"Soporte {CONFIG['params']['support_range_days']}d"),
             Line2D([0], [0], color='white', lw=1, label='SMA 20d'),
         ]
-        ax.legend(handles=handles, loc='upper left', fontsize='x-small', facecolor='#333333', labelcolor='white')  # type: ignore
+        ax.legend(handles=handles, loc='upper left', fontsize='x-small', facecolor='#333333', labelcolor='white') # type: ignore
 
-        fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)  # type: ignore
+        fig.savefig(buf, format='png', bbox_inches='tight', dpi=100) # type: ignore
         buf.seek(0)
         return base64.b64encode(buf.read()).decode('utf-8')
     except Exception as e:
@@ -251,5 +325,4 @@ def briefing() -> BriefResponse:
         return BriefResponse(mensaje=message, imagen_base64=img_b64)
 
     except Exception as e:
-        # Error general catastrófico
         return BriefResponse(mensaje=f"Error V17.5: {str(e)}", imagen_base64="")

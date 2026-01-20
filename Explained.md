@@ -12,7 +12,7 @@
 - `api`
   - `crypto_url`: endpoint de CryptoCompare para histórico diario de BTC.
   - `news_url`: RSS de Google News (ES) para obtener titulares.
-  - `tinyurl_api`: servicio TinyURL para acortar enlaces.
+  - `shortener_api`: servicio is.gd para acortar enlaces (sustituye a TinyURL por estabilidad).
   - `headers`: User-Agent de navegador para evitar bloqueos.
 - `tickers`: símbolos consultados vía yfinance (ETH-USD, MSTR, ^GSPC, ^NDX, GC=F) mapeados a nombres amigables.
 - `params`
@@ -36,7 +36,7 @@
 ## Detalle de funciones
 
 ### 1) `make_tiny(url: str) -> str`
-- Llama a TinyURL para acortar la URL. Si falla, retorna la original.
+- Llama a la API de is.gd para acortar la URL de forma resiliente. Si falla, retorna la original.
 
 ### 2) `get_crypto_data() -> tuple[pd.DataFrame, dict[str, float]]`
 - Descarga histórico diario de BTC (CryptoCompare) y construye un DataFrame con columnas: Open, High, Low, Close, Volume.
