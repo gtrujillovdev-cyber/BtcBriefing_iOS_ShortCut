@@ -48,7 +48,7 @@ CONFIG: AppConfig = {
     "api": {
         "crypto_url": "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=800",
         "news_url": "https://news.google.com/rss/search?q=Bitcoin+OR+Criptomonedas+OR+Mercados&hl=es&gl=ES&ceid=ES:es",
-        "tinyurl_api": "http://tinyurl.com/api-create.php?url={url}",
+        "tinyurl_api": "https://tinyurl.com/api-create.php",
         "headers": {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -79,13 +79,57 @@ CONFIG: AppConfig = {
 
 def make_tiny(url: str) -> str:
     try:
-        # Usamos la API pública de TinyURL para limpiar el enlace
-        api_url = CONFIG['api']['tinyurl_api'].format(url=url)
-        r = requests.get(api_url, timeout=2)
-        return r.text
+        # Usamos la API pública de TinyURL con parámetros para codificar correctamente la URL
+        api_url = CONFIG['api']['tinyurl_api']
+        r = requests.get(api_url, params={"url": url}, timeout=5)
+        r.raise_for_status()
+        short = r.text.strip()
+        if not short.startswith("http"):
+            # Respuesta inesperada de TinyURL; devolvemos la URL original
+            return url
+        # Forzamos HTTPS para mayor compatibilidad
+        if short.startswith("http://"):
+            short = "https://" + short.split("://", 1)[1]
+        return short
     except Exception:
         # Si falla el acortador, devolvemos el enlace original aunque sea largo
         return url
+
+
+def normalize_url(url: str) -> str:
+    """Normaliza la URL para asegurar esquema y estructura válida."""
+    try:
+        from urllib.parse import urlparse, urlunparse
+        u = url.strip()
+        if not u:
+            return u
+        parsed = urlparse(u, scheme="https")
+        if not parsed.netloc:
+            # Maneja casos tipo 'www.dominio.com/path'
+            if parsed.path.startswith("www."):
+                parsed = parsed._replace(netloc=parsed.path, path="")
+            else:
+                return u
+        if parsed.scheme not in ("http", "https"):
+            parsed = parsed._replace(scheme="https")
+        return urlunparse(parsed)
+    except Exception:
+        return url
+
+
+def make_clickable_line(url: str) -> str:
+    """Elimina puntuación colgante que puede romper el enlace clicable."""
+    bad_trailing = ",.;:)]}”’'\""
+    clean = url.strip()
+    while clean and clean[-1] in bad_trailing:
+        clean = clean[:-1]
+    return clean
+
+
+def shorten_and_sanitize(url: str) -> str:
+    u = normalize_url(url)
+    short = make_tiny(u)
+    return make_clickable_line(short)
 
 
 # --- 1. MOTOR CRYPTO ---
@@ -172,9 +216,9 @@ def get_clean_news() -> str:
             link_element = item.find('link')
             long_link = link_element.text if link_element is not None and link_element.text else ""
 
-            # ¡MAGIA! Acortamos el enlace
-            short_link = make_tiny(long_link)
-            formatted.append(f"🔹 {title}\n   👉 {short_link}")
+            # Acortamos y saneamos el enlace
+            short_link = shorten_and_sanitize(long_link)
+            formatted.append(f"🔹 {title}\n👉 {short_link}")
 
         if not formatted:
             return "Sin noticias."
