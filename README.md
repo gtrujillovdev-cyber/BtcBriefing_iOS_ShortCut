@@ -1,70 +1,110 @@
 # 📉 BtcBriefing iOS Assistant (V17.5)
 
-**Estado:** 🟢 Producción | **Licencia:** MIT | **Stack:** Python + Google Cloud Run + iOS Shortcuts
+Estado: 🟢 Producción | Licencia: MIT | Stack: Python + FastAPI + Google Cloud Run + iOS Shortcuts
 
-Este proyecto es un **Analista Financiero Cuantitativo Personal**.
-Es un backend (API) diseñado para ser consumido por un Atajo de iOS. Cada mañana, recopila datos de BTC, ETH, Nasdaq y S&P500, genera un gráfico técnico con `mplfinance`, busca noticias en español, acorta los enlaces y envía un informe ejecutivo vía iMessage.
+Backend (API) diseñado para ser consumido por un Atajo de iOS. Cada mañana, recopila datos de BTC, ETH, Nasdaq y S&P500, genera un gráfico técnico con `mplfinance`, busca noticias en español, acorta los enlaces y devuelve un informe ejecutivo con imagen en Base64 para ser enviado por iMessage.
 
 ---
 
 ## 🏗️ Arquitectura del Sistema
 
-El flujo de datos funciona así:
-
-1.  📱 **iOS Shortcut:** Despierta y pide informe (`GET /briefing`).
-2.  ☁️ **Cloud Run (Python):**
-    * Consulta APIs externas (Yahoo Finance, CryptoCompare).
-    * Calcula indicadores (RSI, SMA 2Y, Soportes).
-    * Genera gráfico `.png` y lo codifica en Base64.
-    * Busca noticias y acorta URLs con TinyURL.
-3.  📱 **iOS Shortcut:** Recibe JSON, decodifica la imagen y envía el iMessage.
+1) 📱 iOS Shortcut solicita informe (GET /briefing).
+2) ☁️ Cloud Run (Python):
+   - Consulta APIs externas (Yahoo Finance, CryptoCompare).
+   - Calcula indicadores (RSI, SMA 2Y, soportes).
+   - Genera gráfico `.png` y lo codifica en Base64.
+   - Busca noticias y acorta URLs con TinyURL.
+3) 📱 iOS Shortcut recibe JSON, decodifica la imagen y envía el iMessage.
 
 ---
 
-## 💻 Guía para Desarrolladores (Local Setup)
+## 📁 Estructura del repositorio
 
-Si quieres colaborar o probar cambios sin gastar dinero en la nube, sigue estos pasos:
+Archivos principales:
+- main.py
+- requirements.txt
+- Dockerfile
+- test_local.py
+- .gitignore
+- README.md
 
-### 1. Clonar y Preparar
-\`\`\`bash
+---
+
+## ✅ Requisitos Previos
+
+- Python 3.9+ (recomendado 3.10+)
+- pip
+- (Opcional) Docker
+- Google Cloud SDK instalado y autenticado
+
+---
+
+## 💻 Configuración y Pruebas Locales
+
+### 1) Clonado y preparación
+
+```bash
 git clone https://github.com/gtrujillovdev-cyber/BtcBriefing_iOS_ShortCut.git
 cd BtcBriefing_iOS_ShortCut
+```
 
-# Crear entorno virtual (Opcional pero recomendado)
+### 2) (Recomendado) Crear entorno virtual e instalar dependencias
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
-
-# Instalar dependencias
 pip install -r requirements.txt
-\`\`\`
+```
 
-### 2. 🧪 Realizar Pruebas Locales (Test Script)
-Hemos incluido un script que simula ser el iPhone. Ejecútalo para verificar que tu código genera el gráfico y el texto correctamente:
+### 3) Test rápido del backend
 
-\`\`\`bash
+```bash
 python test_local.py
-\`\`\`
+```
 
-* **Éxito:** Se creará un archivo `test_output_grafico.png` en tu carpeta. Ábrelo para verificar el diseño.
-* **Logs:** Verás el texto del informe impreso en la terminal.
+- Se crea `test_output_grafico.png` con el gráfico.
+- En consola verás el texto del briefing.
+- Corrige cualquier error antes de continuar.
 
-### 3. Servidor de Desarrollo
-Si prefieres probar la API en el navegador:
-\`\`\`bash
+### 4) Servidor local (opcional)
+
+```bash
 uvicorn main:app --reload
-\`\`\`
-Abre [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) para ver la documentación interactiva (Swagger UI).
+```
+
+- Abre: http://127.0.0.1:8000/docs
+- Prueba el endpoint `/briefing` desde Swagger UI.
+- Debes recibir JSON con `mensaje` y `imagen_base64`.
 
 ---
 
-## ☁️ Guía de Despliegue (Google Cloud)
+## ☁️ Despliegue en Google Cloud
 
-Para subir tu propia versión a producción:
+Esta guía cubre desde la preparación local hasta la publicación del servicio en Google Cloud Run.
 
-1.  Instala el [Google Cloud SDK](https://cloud.google.com/sdk/docs/install).
-2.  Ejecuta el deploy:
+### 1) Autenticación y proyecto
 
-\`\`\`bash
+```bash
+gcloud auth login
+gcloud auth list
+gcloud config set project [PROJECT_ID]   # Reemplaza por tu Project ID
+```
+
+### 2) (Opcional) Compilar imagen con Cloud Build
+
+Valida que la imagen del contenedor construye correctamente con tu Dockerfile.
+
+```bash
+gcloud builds submit --tag gcr.io/[PROJECT_ID]/btcbriefing-test
+```
+
+- Compila la imagen con tu `Dockerfile`.
+- Si hay fallos en dependencias o Python, se verán aquí.
+- No despliega todavía; solo valida la imagen.
+
+### 3) Despliegue en Cloud Run
+
+```bash
 gcloud run deploy brief-bot \
   --source . \
   --platform managed \
@@ -72,34 +112,74 @@ gcloud run deploy brief-bot \
   --allow-unauthenticated \
   --memory 1Gi \
   --clear-base-image
-\`\`\`
+```
+
+Resultado esperado:
+- Se crea el servicio `brief-bot`.
+- Obtendrás una URL pública, por ejemplo: `https://brief-bot-xxxxx.a.run.app`.
+
+(Avanzado) Para probar sin exponer tráfico: añade `--no-traffic` y crea una revisión, luego cambia tráfico cuando confirmes.
+
+### 4) Verificar API en producción
+
+```bash
+curl https://brief-bot-xxxxx.a.run.app/briefing
+```
+
+Respuesta esperada:
+
+```json
+{
+  "mensaje": "Texto del briefing",
+  "imagen_base64": "iVBORw0KGgoAAAANSUhEUgAA..."
+}
+```
+
+Esto confirma que la API funciona para el Shortcut iOS.
 
 ---
 
-## 📱 Configuración del Cliente (iPhone)
+## 📱 Configuración del Shortcut iOS
 
-El usuario final debe crear un Atajo (Shortcut) nativo en iOS con estos bloques exactos:
+1) Obtener contenido de URL
+   - URL: `https://[TU-SERVICIO].run.app/briefing`
+   - Método: GET
 
-| Paso | Acción | Configuración |
-| :--- | :--- | :--- |
-| **1** | **Obtener contenido de URL** | **URL:** `https://[TU-URL].run.app/briefing`<br>**Método:** GET |
-| **2** | **Obtener valor del diccionario** | **Clave:** `mensaje`<br>**Entrada:** Resultado del Paso 1 |
-| **3** | **Obtener valor del diccionario** | **Clave:** `imagen_base64`<br>**Entrada:** Resultado del Paso 1 |
-| **4** | **Descodificar Base64** | **Entrada:** Resultado del Paso 3 |
-| **5** | **Guardar archivo** | **Entrada:** Imagen del Paso 4<br>**Ruta:** `temp_chart.png`<br>**Preguntar:** 🔴 Off \| **Sobrescribir:** 🟢 On |
-| **6** | **Enviar mensaje** | **Contenido:** Variable Texto (Paso 2) + Variable Archivo (Paso 5) |
+2) Obtener valor del diccionario
+   - Clave: `mensaje`
+   - Clave: `imagen_base64`
+
+3) Decodificar Base64 (entrada: `imagen_base64`).
+
+4) Guardar archivo
+   - Ruta: `temp_chart.png`
+   - Preguntar: Off / Sobrescribir: On
+
+5) Enviar mensaje
+   - Contenido: Texto (`mensaje`) + Imagen (`temp_chart.png`).
+
+---
+
+## 🤝 Flujo de trabajo y buenas prácticas
+
+1) Verifica build local con `python test_local.py`.
+2) Verifica API local con `uvicorn main:app --reload`.
+3) Verifica build con `gcloud builds submit` (opcional).
+4) Despliega a Cloud Run (opcionalmente con `--no-traffic`).
+5) Usa ramas y PRs:
+
+```bash
+git checkout -b feature/mi-mejora
+git add .
+git commit -m "Validate build and deploy pipeline"
+git push origin feature/mi-mejora
+```
+
+6) Abre Pull Request para fusionar con `main`. La rama `main` debe permanecer estable.
 
 ---
 
-## 🤝 Cómo Colaborar (Contributing)
+## 📜 Licencia y mantenimiento
 
-Este proyecto sigue un flujo de trabajo estricto para proteger la estabilidad.
-
-1.  **NO hagas push a `main`:** La rama principal está protegida.
-2.  **Crea una rama:** `git checkout -b feature/mi-mejora`
-3.  **Haz tus cambios y prueba:** Usa `python test_local.py`.
-4.  **Sube tu rama:** `git push origin feature/mi-mejora`.
-5.  **Abre un Pull Request (PR):** En GitHub, solicita fusionar tu rama con `main`.
-
----
-*Maintained by Gabriel Trujillo Vallejo (2026).*
+- Licencia: MIT
+- Maintained by Gabriel Trujillo Vallejo (2026)
