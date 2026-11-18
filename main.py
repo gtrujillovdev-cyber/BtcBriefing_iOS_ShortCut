@@ -6,6 +6,8 @@ import base64
 from datetime import datetime
 import requests
 import os
+import re
+import html
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
 import matplotlib
 matplotlib.use('Agg')
@@ -183,10 +185,19 @@ def get_clean_news() -> str:
             raw_title: str = title_el.text if (title_el is not None and title_el.text) else ""
             title: str = raw_title.split(' - ')[0] if raw_title else ""
 
-            link_el: Optional[ElementTree.Element] = item.find('link')
-            long_link: str = link_el.text if (link_el is not None and link_el.text) else ""
+            description_el: Optional[ElementTree.Element] = item.find('description')
+            description: str = description_el.text if description_el is not None and description_el.text else ""
 
-            short_link: str = make_tiny(long_link.strip()) if long_link else ""
+            long_link: str = ""
+            if description:
+                # El contenido de la descripción es HTML escapado, necesitamos decodificarlo
+                unescaped_description = html.unescape(description)
+                # Extraer la URL del tag <a href="..."> en la descripción
+                match = re.search(r'href="([^"]+)"', unescaped_description)
+                if match:
+                    long_link = match.group(1)
+
+            short_link: str = make_tiny(long_link) if long_link else ""
 
             bullet: str = f"🔹 {title}\n👉 {short_link}" if short_link else f"🔹 {title}"
             formatted.append(bullet)
